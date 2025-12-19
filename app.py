@@ -3,6 +3,7 @@ import math
 import uuid
 import zipfile
 import random
+import gc
 from flask import Flask, render_template, request, jsonify
 from PIL import Image, ImageDraw
 
@@ -182,72 +183,65 @@ def draw_cut_lines_on_full_image(img_path, rows, cols, output_path, h_edges, v_e
         return output_path
 
 def process_image(image_path, num_pieces, session_id):
-    original_image = Image.open(image_path).convert("RGBA")
-    img_w, img_h = original_image.size
-    rows, cols = calculate_grid(img_w, img_h, num_pieces)
-    piece_w, piece_h = img_w / cols, img_h / rows
-    
+    # 1. Open and immediately resize to save RAM
+    with Image.open(image_path).convert("RGBA") as original_full:
+        # Limit resolution to 1000px max - huge memory saver
+        MAX_RES = 1000
+        if max(original_full.size) > MAX_RES:
+            original_full.thumbnail((MAX_RES, MAX_RES), Image.Resampling.LANCZOS)
+        
+        img_w, img_h = original_full.size
+        rows, cols = calculate_grid(img_w, img_h, num_pieces)
+        piece_w, piece_h = img_w / cols, img_h / rows
+        
+        # Keep image in memory for processing
+        img_data = original_full.copy()
+
     session_dir = os.path.join(OUTPUT_FOLDER, session_id)
     pieces_dir = os.path.join(session_dir, "pieces")
     os.makedirs(pieces_dir, exist_ok=True)
 
-    # Define random interlocking pattern
-    # 1=Tab (Right/Down), -1=Hole (Left/Up)
-    # Be careful: a '1' on the right of piece A must meet a '-1' on the left of piece B
-    # BUT, to simplify logic:
-    # v_edges[r][c] represents the boundary between col c and col c+1
-    # If v_edges is 1: Left piece has Tab, Right piece has Hole
-    
     v_edges = [[random.choice([1, -1]) for _ in range(cols - 1)] for _ in range(rows)]
     h_edges = [[random.choice([1, -1]) for _ in range(cols)] for _ in range(rows - 1)]
 
-    # 1. Generate Individual Pieces
+    # 2. Generate Pieces
     for r in range(rows):
         for c in range(cols):
-            # Determine Edges
-            # TOP
-            if r == 0: top = 0
-            else: top = -h_edges[r-1][c] # Invert the shape of the row above
-            
-            # RIGHT
-            if c == cols - 1: right = 0
-            else: right = v_edges[r][c]
-            
-            # BOTTOM
-            if r == rows - 1: bottom = 0
-            else: bottom = h_edges[r][c]
-            
-            # LEFT
-            if c == 0: left = 0
-            else: left = -v_edges[r][c-1] # Invert shape of col to left
+            top = 0 if r == 0 else -h_edges[r-1][c]
+            right = 0 if c == cols - 1 else v_edges[r][c]
+            bottom = 0 if r == rows - 1 else h_edges[r][c]
+            left = 0 if c == 0 else -v_edges[r][c-1]
 
-            # Generate Mask
             mask, padding, _ = create_piece_mask(piece_w, piece_h, (top, right, bottom, left))
-            
-            # Cut from Original
             crop_x, crop_y = int(c * piece_w - padding), int(r * piece_h - padding)
             
-            piece_img = Image.new('RGBA', mask.size, (0, 0, 0, 0))
-            src_x, src_y = max(0, crop_x), max(0, crop_y)
-            src_w = min(img_w, crop_x + mask.size[0]) - src_x
-            src_h = min(img_h, crop_y + mask.size[1]) - src_y
+            # Use 'with' to ensure piece is cleared from RAM immediately after saving
+            with Image.new('RGBA', mask.size, (0, 0, 0, 0)) as piece_img:
+                src_x, src_y = max(0, crop_x), max(0, crop_y)
+                src_w = min(img_w, crop_x + mask.size[0]) - src_x
+                src_h = min(img_h, crop_y + mask.size[1]) - src_y
+                
+                if src_w > 0 and src_h > 0:
+                    chunk = img_data.crop((src_x, src_y, src_x + src_w, src_y + src_h))
+                    piece_img.paste(chunk, (src_x - crop_x, src_y - crop_y))
+                    chunk.close()
+                
+                piece_img.putalpha(mask)
+                # Optimize PNG for speed over compression size
+                piece_img.save(os.path.join(pieces_dir, f"piece_{r}_{c}.png"), optimize=False, compress_level=1)
             
-            if src_w > 0 and src_h > 0:
-                chunk = original_image.crop((src_x, src_y, src_x + src_w, src_y + src_h))
-                piece_img.paste(chunk, (src_x - crop_x, src_y - crop_y))
-            
-            piece_img.putalpha(mask)
-            piece_img.save(os.path.join(pieces_dir, f"piece_{r}_{c}.png"))
+            # Explicitly clear internal Python memory every 10 pieces
+            if (r * cols + c) % 10 == 0:
+                gc.collect()
 
-    # 2. Generate "Master Cut Sheet" (Full image with lines)
-    guide_filename = "FULL_IMAGE_WITH_CUT_LINES.png"
-    guide_path = os.path.join(session_dir, guide_filename)
+    # 3. Generate Guide and Zip
+    guide_path = os.path.join(session_dir, "PRINT_THIS_GUIDE.jpg")
+    # Save guide as JPEG (much lighter than PNG for the full image)
     draw_cut_lines_on_full_image(image_path, rows, cols, guide_path, h_edges, v_edges)
 
-    # 3. Zip
     zip_path = os.path.join(session_dir, "puzzle_pack.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
-        zipf.write(guide_path, guide_filename)
+        zipf.write(guide_path, "PRINT_THIS_GUIDE.jpg")
         for root, _, files in os.walk(pieces_dir):
             for file in files:
                 zipf.write(os.path.join(root, file), os.path.join("individual_pieces", file))
