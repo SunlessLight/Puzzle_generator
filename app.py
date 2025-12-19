@@ -117,69 +117,60 @@ def create_piece_mask(piece_w, piece_h, edge_shapes):
 
 def draw_cut_lines_on_full_image(img_path, rows, cols, output_path, h_edges, v_edges):
     """
-    Draws the full grid of rectangular cut lines onto the original image.
-    This creates the "Master Sheet" for printing.
+    Draws the full grid of rectangular cut lines and saves as JPEG.
     """
-    with Image.open(img_path).convert("RGBA") as img:
+    with Image.open(img_path) as img:
+        # Resize guide to match the pieces' scale for consistency
+        MAX_RES = 1000
+        if max(img.size) > MAX_RES:
+            img.thumbnail((MAX_RES, MAX_RES), Image.Resampling.LANCZOS)
+        
+        # Convert to RGB (JPEG doesn't support transparency/Alpha channel)
+        img = img.convert("RGB")
         draw = ImageDraw.Draw(img)
         width, height = img.size
         piece_w = width / cols
         piece_h = height / rows
 
-        # Function to draw a line with a border (contrast)
         def draw_contrasted_line(pts):
-            draw.line(pts, fill="black", width=4)
-            draw.line(pts, fill="white", width=2)
+            # Thick black outline, thin white inner line for maximum visibility
+            draw.line(pts, fill=(0, 0, 0), width=3)
+            draw.line(pts, fill=(255, 255, 255), width=1)
 
-        # 1. Draw Vertical Edges (between cols)
+        # 1. Draw Vertical Edges
         for r in range(rows):
             for c in range(1, cols):
                 x_base = c * piece_w
                 y_start = r * piece_h
                 y_end = (r + 1) * piece_h
+                shape = v_edges[r][c-1]
                 
-                # Check the edge shape (defined in v_edges[r][c-1])
-                shape = v_edges[r][c-1] # 1 or -1
-                
-                # Straight line logic
-                p_start = (x_base, y_start)
-                p_end = (x_base, y_end)
-                
-                # Get tab points
                 tab_pts = get_square_tab_points(piece_h, is_tab=(shape == 1))
-                
-                # Convert tab points to global coordinates
-                # For vertical edge, we move down Y, and "tab" moves in X
-                poly_pts = [p_start]
+                poly_pts = [(x_base, y_start)]
                 for px, py in tab_pts:
-                    # px moves down the edge (Y), py moves out (X)
                     poly_pts.append((x_base + py, y_start + px))
-                poly_pts.append(p_end)
+                poly_pts.append((x_base, y_end))
                 
                 draw_contrasted_line(poly_pts)
 
-        # 2. Draw Horizontal Edges (between rows)
+        # 2. Draw Horizontal Edges
         for r in range(1, rows):
             for c in range(cols):
                 y_base = r * piece_h
                 x_start = c * piece_w
                 x_end = (c + 1) * piece_w
-                
                 shape = h_edges[r-1][c]
                 
-                p_start = (x_start, y_base)
-                p_end = (x_end, y_base)
-                
                 tab_pts = get_square_tab_points(piece_w, is_tab=(shape == 1))
-                
-                poly_pts = [p_start]
+                poly_pts = [(x_start, y_base)]
                 for px, py in tab_pts:
                     poly_pts.append((x_start + px, y_base + py))
-                poly_pts.append(p_end)
+                poly_pts.append((x_end, y_base))
                 
                 draw_contrasted_line(poly_pts)
 
-        img.save(output_path)
+        # Save as JPEG with 85% quality (good balance of size and clarity)
+        img.save(output_path, "JPEG", quality=85)
         return output_path
 
 def process_image(image_path, num_pieces, session_id):
