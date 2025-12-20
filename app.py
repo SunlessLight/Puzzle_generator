@@ -117,13 +117,15 @@ def create_piece_mask(piece_w, piece_h, edge_shapes):
 
 def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_edges, margin_px):
     """
-    Draws the full grid inside an outer border frame with a visual overlay.
+    Draws the full grid inside an outer border frame.
     """
-    # We use RGBA here temporarily to allow for a transparent overlay effect
-    with img_data.copy().convert("RGBA") as img:
+    # Use RGB directly since we removed the transparent overlay
+    with img_data.copy().convert("RGB") as img:
         draw = ImageDraw.Draw(img)
-
-        # Draw a sharp black line exactly where the frame ends and puzzle begins
+        # FIX: Define width and height before using them
+        width, height = img.size 
+        
+        # 1. Draw a sharp black line exactly where the frame ends
         draw.rectangle(
             [margin_px, margin_px, width - margin_px, height - margin_px], 
             outline=(0, 0, 0), width=2
@@ -139,7 +141,7 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
             draw.line(pts, fill=(0, 0, 0), width=3)
             draw.line(pts, fill=(255, 255, 255), width=1)
 
-        # 1. Draw Vertical Edges
+        # 2. Draw Vertical Edges
         for r in range(rows):
             for c in range(1, cols):
                 x_base = margin_px + (c * piece_w)
@@ -153,7 +155,7 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
                 poly_pts.append((x_base, y_end))
                 draw_contrasted_line(poly_pts)
 
-        # 2. Draw Horizontal Edges
+        # 3. Draw Horizontal Edges
         for r in range(1, rows):
             for c in range(cols):
                 y_base = margin_px + (r * piece_h)
@@ -166,12 +168,6 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
                     poly_pts.append((x_start + px, y_base + py))
                 poly_pts.append((x_end, y_base))
                 draw_contrasted_line(poly_pts)
-
-        # 3. Draw a crisp inner border line
-        draw.rectangle(
-            [margin_px, margin_px, width - margin_px, height - margin_px], 
-            outline=(0, 0, 0), width=2
-        )
 
         img.save(output_path, "JPEG", quality=85)
         return output_path
