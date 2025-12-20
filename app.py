@@ -115,18 +115,12 @@ def create_piece_mask(piece_w, piece_h, edge_shapes):
     draw.polygon(points, fill=255)
     return mask, padding, points
 
-def draw_cut_lines_on_full_image(img_path, rows, cols, output_path, h_edges, v_edges):
+def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_edges):
     """
-    Draws the full grid of rectangular cut lines and saves as JPEG.
+    Draws the full grid of rectangular cut lines onto an image object and saves as JPEG.
     """
-    with Image.open(img_path) as img:
-        # Resize guide to match the pieces' scale for consistency
-        MAX_RES = 1000
-        if max(img.size) > MAX_RES:
-            img.thumbnail((MAX_RES, MAX_RES), Image.Resampling.LANCZOS)
-        
-        # Convert to RGB (JPEG doesn't support transparency/Alpha channel)
-        img = img.convert("RGB")
+    # Create a copy so we don't draw lines on the version used to cut pieces
+    with img_data.copy().convert("RGB") as img:
         draw = ImageDraw.Draw(img)
         width, height = img.size
         piece_w = width / cols
@@ -169,14 +163,13 @@ def draw_cut_lines_on_full_image(img_path, rows, cols, output_path, h_edges, v_e
                 
                 draw_contrasted_line(poly_pts)
 
-        # Save as JPEG with 85% quality (good balance of size and clarity)
+        # Save as JPEG
         img.save(output_path, "JPEG", quality=85)
         return output_path
 
 def process_image(image_path, num_pieces, session_id):
     # 1. Open and immediately resize to save RAM
     with Image.open(image_path).convert("RGBA") as original_full:
-        # Limit resolution to 1000px max - huge memory saver
         MAX_RES = 1000
         if max(original_full.size) > MAX_RES:
             original_full.thumbnail((MAX_RES, MAX_RES), Image.Resampling.LANCZOS)
@@ -195,7 +188,11 @@ def process_image(image_path, num_pieces, session_id):
     v_edges = [[random.choice([1, -1]) for _ in range(cols - 1)] for _ in range(rows)]
     h_edges = [[random.choice([1, -1]) for _ in range(cols)] for _ in range(rows - 1)]
 
-    # 2. Generate Pieces
+    # --- STEP 1: GENERATE FRAME (GUIDE) FIRST ---
+    guide_path = os.path.join(session_dir, "PRINT_THIS_GUIDE.jpg")
+    draw_cut_lines_on_full_image(img_data, rows, cols, guide_path, h_edges, v_edges)
+
+    # --- STEP 2: GENERATE PIECES SECOND ---
     for r in range(rows):
         for c in range(cols):
             top = 0 if r == 0 else -h_edges[r-1][c]
@@ -206,7 +203,6 @@ def process_image(image_path, num_pieces, session_id):
             mask, padding, _ = create_piece_mask(piece_w, piece_h, (top, right, bottom, left))
             crop_x, crop_y = int(c * piece_w - padding), int(r * piece_h - padding)
             
-            # Use 'with' to ensure piece is cleared from RAM immediately after saving
             with Image.new('RGBA', mask.size, (0, 0, 0, 0)) as piece_img:
                 src_x, src_y = max(0, crop_x), max(0, crop_y)
                 src_w = min(img_w, crop_x + mask.size[0]) - src_x
@@ -218,24 +214,21 @@ def process_image(image_path, num_pieces, session_id):
                     chunk.close()
                 
                 piece_img.putalpha(mask)
-                # Optimize PNG for speed over compression size
                 piece_img.save(os.path.join(pieces_dir, f"piece_{r}_{c}.png"), optimize=False, compress_level=1)
             
-            # Explicitly clear internal Python memory every 10 pieces
             if (r * cols + c) % 10 == 0:
                 gc.collect()
 
-    # 3. Generate Guide and Zip
-    guide_path = os.path.join(session_dir, "PRINT_THIS_GUIDE.jpg")
-    # Save guide as JPEG (much lighter than PNG for the full image)
-    draw_cut_lines_on_full_image(image_path, rows, cols, guide_path, h_edges, v_edges)
-
+    # --- STEP 3: ZIP EVERYTHING ---
     zip_path = os.path.join(session_dir, "puzzle_pack.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
         zipf.write(guide_path, "PRINT_THIS_GUIDE.jpg")
         for root, _, files in os.walk(pieces_dir):
             for file in files:
                 zipf.write(os.path.join(root, file), os.path.join("individual_pieces", file))
+    
+    # Clean up large image from RAM
+    img_data.close()
     
     return zip_path
 
