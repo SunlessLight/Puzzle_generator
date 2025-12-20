@@ -115,31 +115,35 @@ def create_piece_mask(piece_w, piece_h, edge_shapes):
     draw.polygon(points, fill=255)
     return mask, padding, points
 
-def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_edges):
+def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_edges, margin_px):
     """
-    Draws the full grid of rectangular cut lines onto an image object and saves as JPEG.
+    Draws the full grid inside an outer border frame.
     """
-    # Create a copy so we don't draw lines on the version used to cut pieces
     with img_data.copy().convert("RGB") as img:
         draw = ImageDraw.Draw(img)
         width, height = img.size
-        piece_w = width / cols
-        piece_h = height / rows
+        
+        # Calculate the "Active Area" inside the border
+        inner_w = width - (2 * margin_px)
+        inner_h = height - (2 * margin_px)
+        
+        piece_w = inner_w / cols
+        piece_h = inner_h / rows
 
         def draw_contrasted_line(pts):
-            # Thick black outline, thin white inner line for maximum visibility
             draw.line(pts, fill=(0, 0, 0), width=3)
             draw.line(pts, fill=(255, 255, 255), width=1)
 
-        # 1. Draw Vertical Edges
+        # 1. Draw Vertical Edges (Slicing the inner width)
         for r in range(rows):
             for c in range(1, cols):
-                x_base = c * piece_w
-                y_start = r * piece_h
-                y_end = (r + 1) * piece_h
-                shape = v_edges[r][c-1]
+                x_base = margin_px + (c * piece_w)
+                y_start = margin_px + (r * piece_h)
+                y_end = margin_px + ((r + 1) * piece_h)
                 
+                shape = v_edges[r][c-1]
                 tab_pts = get_square_tab_points(piece_h, is_tab=(shape == 1))
+                
                 poly_pts = [(x_base, y_start)]
                 for px, py in tab_pts:
                     poly_pts.append((x_base + py, y_start + px))
@@ -147,15 +151,16 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
                 
                 draw_contrasted_line(poly_pts)
 
-        # 2. Draw Horizontal Edges
+        # 2. Draw Horizontal Edges (Slicing the inner height)
         for r in range(1, rows):
             for c in range(cols):
-                y_base = r * piece_h
-                x_start = c * piece_w
-                x_end = (c + 1) * piece_w
-                shape = h_edges[r-1][c]
+                y_base = margin_px + (r * piece_h)
+                x_start = margin_px + (c * piece_w)
+                x_end = margin_px + ((c + 1) * piece_w)
                 
+                shape = h_edges[r-1][c]
                 tab_pts = get_square_tab_points(piece_w, is_tab=(shape == 1))
+                
                 poly_pts = [(x_start, y_base)]
                 for px, py in tab_pts:
                     poly_pts.append((x_start + px, y_base + py))
@@ -163,22 +168,32 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
                 
                 draw_contrasted_line(poly_pts)
 
-        # Save as JPEG
+        # Draw one solid rectangle around the inner area to show the "Frame" cut
+        draw.rectangle(
+            [margin_px, margin_px, width - margin_px, height - margin_px], 
+            outline=(255, 255, 255), width=2
+        )
+
         img.save(output_path, "JPEG", quality=85)
         return output_path
 
 def process_image(image_path, num_pieces, session_id):
-    # 1. Open and immediately resize to save RAM
     with Image.open(image_path).convert("RGBA") as original_full:
         MAX_RES = 1000
         if max(original_full.size) > MAX_RES:
             original_full.thumbnail((MAX_RES, MAX_RES), Image.Resampling.LANCZOS)
         
         img_w, img_h = original_full.size
-        rows, cols = calculate_grid(img_w, img_h, num_pieces)
-        piece_w, piece_h = img_w / cols, img_h / rows
         
-        # Keep image in memory for processing
+        # Set border to 10% of the smallest dimension
+        margin_px = int(min(img_w, img_h) * 0.10)
+        
+        inner_w = img_w - (2 * margin_px)
+        inner_h = img_h - (2 * margin_px)
+        
+        rows, cols = calculate_grid(inner_w, inner_h, num_pieces)
+        piece_w, piece_h = inner_w / cols, inner_h / rows
+        
         img_data = original_full.copy()
 
     session_dir = os.path.join(OUTPUT_FOLDER, session_id)
@@ -188,20 +203,24 @@ def process_image(image_path, num_pieces, session_id):
     v_edges = [[random.choice([1, -1]) for _ in range(cols - 1)] for _ in range(rows)]
     h_edges = [[random.choice([1, -1]) for _ in range(cols)] for _ in range(rows - 1)]
 
-    # --- STEP 1: GENERATE FRAME (GUIDE) FIRST ---
+    # --- STEP 1: GENERATE FRAME ---
     guide_path = os.path.join(session_dir, "PRINT_THIS_GUIDE.jpg")
-    draw_cut_lines_on_full_image(img_data, rows, cols, guide_path, h_edges, v_edges)
+    draw_cut_lines_on_full_image(img_data, rows, cols, guide_path, h_edges, v_edges, margin_px)
 
-    # --- STEP 2: GENERATE PIECES SECOND ---
+    # --- STEP 2: GENERATE PIECES (Offset by margin) ---
     for r in range(rows):
         for c in range(cols):
+            # Same edge logic as before
             top = 0 if r == 0 else -h_edges[r-1][c]
             right = 0 if c == cols - 1 else v_edges[r][c]
             bottom = 0 if r == rows - 1 else h_edges[r][c]
             left = 0 if c == 0 else -v_edges[r][c-1]
 
             mask, padding, _ = create_piece_mask(piece_w, piece_h, (top, right, bottom, left))
-            crop_x, crop_y = int(c * piece_w - padding), int(r * piece_h - padding)
+            
+            # The crop is now relative to the inner area (base + margin)
+            crop_x = int(margin_px + (c * piece_w) - padding)
+            crop_y = int(margin_px + (r * piece_h) - padding)
             
             with Image.new('RGBA', mask.size, (0, 0, 0, 0)) as piece_img:
                 src_x, src_y = max(0, crop_x), max(0, crop_y)
@@ -214,12 +233,12 @@ def process_image(image_path, num_pieces, session_id):
                     chunk.close()
                 
                 piece_img.putalpha(mask)
-                piece_img.save(os.path.join(pieces_dir, f"piece_{r}_{c}.png"), optimize=False, compress_level=1)
+                piece_img.save(os.path.join(pieces_dir, f"piece_{r}_{c}.png"), compress_level=1)
             
             if (r * cols + c) % 10 == 0:
                 gc.collect()
 
-    # --- STEP 3: ZIP EVERYTHING ---
+    # --- STEP 3: ZIP ---
     zip_path = os.path.join(session_dir, "puzzle_pack.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
         zipf.write(guide_path, "PRINT_THIS_GUIDE.jpg")
@@ -227,9 +246,7 @@ def process_image(image_path, num_pieces, session_id):
             for file in files:
                 zipf.write(os.path.join(root, file), os.path.join("individual_pieces", file))
     
-    # Clean up large image from RAM
     img_data.close()
-    
     return zip_path
 
 # --- ROUTES ---
