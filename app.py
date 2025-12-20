@@ -127,7 +127,7 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
 
         # Draw a semi-transparent white frame (180 = clearly visible but shows the photo)
         # Change 180 to 255 if you want it to be SOLID WHITE
-        frame_color = (255, 255, 255, 180)
+        frame_color = (255, 255, 255, 50)
         width, height = img.size
         
         # --- NEW: VISUAL BORDER DRAWING ---
