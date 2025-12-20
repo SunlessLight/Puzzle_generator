@@ -124,23 +124,32 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
         # Create a separate layer for the frame overlay
         overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
         draw_overlay = ImageDraw.Draw(overlay)
-        
+
+        # Draw a semi-transparent white frame (180 = clearly visible but shows the photo)
+        # Change 180 to 255 if you want it to be SOLID WHITE
+        frame_color = (255, 255, 255, 180)
         width, height = img.size
         
         # --- NEW: VISUAL BORDER DRAWING ---
         # This draws a semi-transparent white frame over the margin area
         # Top margin
-        draw_overlay.rectangle([0, 0, width, margin_px], fill=(255, 255, 255, 160))
+        draw_overlay.rectangle([0, 0, width, margin_px], fill=frame_color)
         # Bottom margin
-        draw_overlay.rectangle([0, height - margin_px, width, height], fill=(255, 255, 255, 160))
+        draw_overlay.rectangle([0, height - margin_px, width, height], fill=frame_color)
         # Left margin
-        draw_overlay.rectangle([0, margin_px, margin_px, height - margin_px], fill=(255, 255, 255, 160))
+        draw_overlay.rectangle([0, margin_px, margin_px, height - margin_px], fill=frame_color)
         # Right margin
-        draw_overlay.rectangle([width - margin_px, margin_px, width, height - margin_px], fill=(255, 255, 255, 160))
+        draw_overlay.rectangle([width - margin_px, margin_px, width, height - margin_px], fill=frame_color)
         
         # Alpha composite the overlay onto the image
         img = Image.alpha_composite(img, overlay).convert("RGB")
         draw = ImageDraw.Draw(img)
+
+        # Draw a sharp black line exactly where the frame ends and puzzle begins
+        draw.rectangle(
+            [margin_px, margin_px, width - margin_px, height - margin_px], 
+            outline=(0, 0, 0), width=2
+        )
         
         # Calculate the "Active Area" inside the border
         inner_w = width - (2 * margin_px)
