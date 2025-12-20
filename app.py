@@ -197,8 +197,8 @@ def process_image(image_path, num_pieces, session_id):
         
         img_w, img_h = original_full.size
         
-        # Set border to 10% of the smallest dimension
-        margin_px = int(min(img_w, img_h) * 0.10)
+        # Set border to 5% of the smallest dimension
+        margin_px = int(min(img_w, img_h) * 0.05)
         
         inner_w = img_w - (2 * margin_px)
         inner_h = img_h - (2 * margin_px)
