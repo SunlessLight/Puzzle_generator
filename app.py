@@ -117,16 +117,34 @@ def create_piece_mask(piece_w, piece_h, edge_shapes):
 
 def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_edges, margin_px):
     """
-    Draws the full grid inside an outer border frame.
+    Draws the full grid inside an outer border frame with a visual overlay.
     """
-    with img_data.copy().convert("RGB") as img:
-        draw = ImageDraw.Draw(img)
+    # We use RGBA here temporarily to allow for a transparent overlay effect
+    with img_data.copy().convert("RGBA") as img:
+        # Create a separate layer for the frame overlay
+        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        draw_overlay = ImageDraw.Draw(overlay)
+        
         width, height = img.size
+        
+        # --- NEW: VISUAL BORDER DRAWING ---
+        # This draws a semi-transparent white frame over the margin area
+        # Top margin
+        draw_overlay.rectangle([0, 0, width, margin_px], fill=(255, 255, 255, 160))
+        # Bottom margin
+        draw_overlay.rectangle([0, height - margin_px, width, height], fill=(255, 255, 255, 160))
+        # Left margin
+        draw_overlay.rectangle([0, margin_px, margin_px, height - margin_px], fill=(255, 255, 255, 160))
+        # Right margin
+        draw_overlay.rectangle([width - margin_px, margin_px, width, height - margin_px], fill=(255, 255, 255, 160))
+        
+        # Alpha composite the overlay onto the image
+        img = Image.alpha_composite(img, overlay).convert("RGB")
+        draw = ImageDraw.Draw(img)
         
         # Calculate the "Active Area" inside the border
         inner_w = width - (2 * margin_px)
         inner_h = height - (2 * margin_px)
-        
         piece_w = inner_w / cols
         piece_h = inner_h / rows
 
@@ -134,44 +152,38 @@ def draw_cut_lines_on_full_image(img_data, rows, cols, output_path, h_edges, v_e
             draw.line(pts, fill=(0, 0, 0), width=3)
             draw.line(pts, fill=(255, 255, 255), width=1)
 
-        # 1. Draw Vertical Edges (Slicing the inner width)
+        # 1. Draw Vertical Edges
         for r in range(rows):
             for c in range(1, cols):
                 x_base = margin_px + (c * piece_w)
                 y_start = margin_px + (r * piece_h)
                 y_end = margin_px + ((r + 1) * piece_h)
-                
                 shape = v_edges[r][c-1]
                 tab_pts = get_square_tab_points(piece_h, is_tab=(shape == 1))
-                
                 poly_pts = [(x_base, y_start)]
                 for px, py in tab_pts:
                     poly_pts.append((x_base + py, y_start + px))
                 poly_pts.append((x_base, y_end))
-                
                 draw_contrasted_line(poly_pts)
 
-        # 2. Draw Horizontal Edges (Slicing the inner height)
+        # 2. Draw Horizontal Edges
         for r in range(1, rows):
             for c in range(cols):
                 y_base = margin_px + (r * piece_h)
                 x_start = margin_px + (c * piece_w)
                 x_end = margin_px + ((c + 1) * piece_w)
-                
                 shape = h_edges[r-1][c]
                 tab_pts = get_square_tab_points(piece_w, is_tab=(shape == 1))
-                
                 poly_pts = [(x_start, y_base)]
                 for px, py in tab_pts:
                     poly_pts.append((x_start + px, y_base + py))
                 poly_pts.append((x_end, y_base))
-                
                 draw_contrasted_line(poly_pts)
 
-        # Draw one solid rectangle around the inner area to show the "Frame" cut
+        # 3. Draw a crisp inner border line
         draw.rectangle(
             [margin_px, margin_px, width - margin_px, height - margin_px], 
-            outline=(255, 255, 255), width=2
+            outline=(0, 0, 0), width=2
         )
 
         img.save(output_path, "JPEG", quality=85)
